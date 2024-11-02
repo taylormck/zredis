@@ -11,10 +11,18 @@ pub fn main() !void {
     });
     defer listener.deinit();
 
+    try stdout.print("awaiting connection\n", .{});
     while (true) {
         const connection = try listener.accept();
 
-        try stdout.print("accepted new connection", .{});
+        try stdout.print("accepted new connection\n", .{});
+
+        const buffer = [_]u8{};
+        _ = try connection.stream.read(&buffer);
+
+        const pong = "+PONG\r\n";
+        _ = try connection.stream.write(pong);
+
         connection.stream.close();
     }
 }
