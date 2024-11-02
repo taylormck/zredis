@@ -1,7 +1,8 @@
 # Zig build artifacts
 main
-zig-cache/
-zig-out/
+zig-cache
+zig-out
+.zig-cache
 
 # Compiled binary output
 bin/
