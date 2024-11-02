@@ -12,16 +12,19 @@ pub fn main() !void {
     defer listener.deinit();
 
     try stdout.print("awaiting connection\n", .{});
+
     while (true) {
         const connection = try listener.accept();
 
         try stdout.print("accepted new connection\n", .{});
 
-        const buffer = [_]u8{};
-        _ = try connection.stream.read(&buffer);
+        const reader = connection.stream.reader();
+        const writer = connection.stream.writer();
+        var buffer: [1024]u8 = undefined;
 
-        const pong = "+PONG\r\n";
-        _ = try connection.stream.write(pong);
+        while (try reader.read(&buffer) > 0) {
+            try writer.writeAll("+PONG\r\n");
+        }
 
         connection.stream.close();
     }
