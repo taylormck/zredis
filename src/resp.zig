@@ -61,11 +61,9 @@ pub const Value = union(enum) {
     }
 
     pub fn read(allocator: std.mem.Allocator, reader: anytype) !Self {
-        var resp_type: [1]u8 = undefined;
+        const type_token = try next(reader);
 
-        _ = try reader.read(&resp_type);
-
-        return switch (resp_type[0]) {
+        return switch (type_token) {
             '+' => {
                 const line_maybe = try reader.readUntilDelimiterOrEofAlloc(
                     allocator,
@@ -73,12 +71,7 @@ pub const Value = union(enum) {
                     SIMPLE_STRING_MAX_LENGTH,
                 );
 
-                var newline_buffer: [1]u8 = undefined;
-                _ = try reader.read(&newline_buffer);
-
-                if (newline_buffer[0] != '\n') {
-                    return Self.Error.ParseError;
-                }
+                try consume(reader, '\n');
 
                 const line = line_maybe orelse return Self.Error.ParseError;
 
@@ -91,12 +84,7 @@ pub const Value = union(enum) {
                     SIMPLE_STRING_MAX_LENGTH,
                 );
 
-                var newline_buffer: [1]u8 = undefined;
-                _ = try reader.read(&newline_buffer);
-
-                if (newline_buffer[0] != '\n') {
-                    return Self.Error.ParseError;
-                }
+                try consume(reader, '\n');
 
                 const length_buffer = length_maybe orelse return Self.Error.ParseError;
                 const length = try std.fmt.parseInt(usize, length_buffer, 10);
@@ -110,17 +98,8 @@ pub const Value = union(enum) {
                     return Self.Error.ParseError;
                 }
 
-                _ = try reader.read(&newline_buffer);
-
-                if (newline_buffer[0] != '\r') {
-                    return Self.Error.ParseError;
-                }
-
-                _ = try reader.read(&newline_buffer);
-
-                if (newline_buffer[0] != '\n') {
-                    return Self.Error.ParseError;
-                }
+                try consume(reader, '\r');
+                try consume(reader, '\n');
 
                 return Self.bulk_string(try content_buffer.toOwnedSlice());
             },
@@ -133,6 +112,26 @@ pub const Value = union(enum) {
     // TODO: implement deninit
     pub fn deinit() void {}
 };
+
+const ReaderError = error{
+    UnexpectedByte,
+};
+
+fn next(reader: anytype) !u8 {
+    var buffer: [1]u8 = undefined;
+    _ = try reader.read(&buffer);
+
+    return buffer[0];
+}
+
+fn consume(reader: anytype, expected_byte: u8) !void {
+    var buffer: [1]u8 = undefined;
+    _ = try reader.read(&buffer);
+
+    if (buffer[0] != expected_byte) {
+        return ReaderError.UnexpectedByte;
+    }
+}
 
 test "write a simple string" {
     const ArrayList = std.ArrayList;
