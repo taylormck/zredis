@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const SIMPLE_STRING_MAX_LENGTH = 255;
+
 pub const Value = union(enum) {
     SimpleString: []const u8,
     SimpleError: []const u8,
@@ -8,6 +10,10 @@ pub const Value = union(enum) {
     Array: []const Value,
 
     const Self = @This();
+
+    const Error = error{
+        ParseError,
+    };
 
     pub fn simple_string(data: []const u8) Value {
         return .{ .SimpleString = data };
@@ -52,6 +58,76 @@ pub const Value = union(enum) {
                 }
             },
         }
+    }
+
+    pub fn read(allocator: std.mem.Allocator, reader: anytype) !Self {
+        var resp_type: [1]u8 = undefined;
+
+        _ = try reader.read(&resp_type);
+
+        return switch (resp_type[0]) {
+            '+' => {
+                const line_maybe = try reader.readUntilDelimiterOrEofAlloc(
+                    allocator,
+                    '\r',
+                    SIMPLE_STRING_MAX_LENGTH,
+                );
+
+                var newline_buffer: [1]u8 = undefined;
+                _ = try reader.read(&newline_buffer);
+
+                if (newline_buffer[0] != '\n') {
+                    return Self.Error.ParseError;
+                }
+
+                const line = line_maybe orelse return Self.Error.ParseError;
+
+                return Self.simple_string(line);
+            },
+            '$' => {
+                const length_maybe = try reader.readUntilDelimiterOrEofAlloc(
+                    allocator,
+                    '\r',
+                    SIMPLE_STRING_MAX_LENGTH,
+                );
+
+                var newline_buffer: [1]u8 = undefined;
+                _ = try reader.read(&newline_buffer);
+
+                if (newline_buffer[0] != '\n') {
+                    return Self.Error.ParseError;
+                }
+
+                const length_buffer = length_maybe orelse return Self.Error.ParseError;
+                const length = try std.fmt.parseInt(usize, length_buffer, 10);
+
+                var content_buffer = std.ArrayList(u8).init(allocator);
+                try content_buffer.ensureTotalCapacityPrecise(length);
+
+                const content_bytes_read = try reader.readAll(content_buffer.items);
+
+                if (content_bytes_read != length) {
+                    return Self.Error.ParseError;
+                }
+
+                _ = try reader.read(&newline_buffer);
+
+                if (newline_buffer[0] != '\r') {
+                    return Self.Error.ParseError;
+                }
+
+                _ = try reader.read(&newline_buffer);
+
+                if (newline_buffer[0] != '\n') {
+                    return Self.Error.ParseError;
+                }
+
+                return Self.bulk_string(try content_buffer.toOwnedSlice());
+            },
+            // '*' => {},
+            // TODO: replace with actual error handling
+            else => Self.simple_string("oops"),
+        };
     }
 
     // TODO: implement deninit
@@ -262,4 +338,24 @@ test "write an array with mixed element types" {
     try val.write(writer);
 
     try expect(std.mem.eql(u8, buffer.items, "*5\r\n+foo\r\n-bar\r\n$3\r\nxyz\r\n:42\r\n:-42\r\n"));
+}
+
+test "read a simple string" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("+foo\r\n");
+
+    try expect(bytes_written == 6);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    const result = try Value.read(test_allocator, stream.reader());
+
+    switch (result) {
+        .SimpleString => |s| try expect(std.mem.eql(u8, s, "foo")),
+        else => try expect(false),
+    }
 }
