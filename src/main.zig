@@ -29,9 +29,13 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
     var buffer: [1024]u8 = undefined;
 
     while (try reader.read(&buffer) > 0) {
-        const response = try RESP.Value.simple_string("PONG");
+        const response = RESP.Value.simple_string("PONG");
         try response.write(writer);
     }
 
     connection.stream.close();
+}
+
+test {
+    std.testing.refAllDecls(@This());
 }
