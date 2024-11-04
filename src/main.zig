@@ -1,5 +1,6 @@
 const std = @import("std");
 const net = std.net;
+const RESP = @import("./resp.zig");
 
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
@@ -11,7 +12,7 @@ pub fn main() !void {
     });
     defer listener.deinit();
 
-    try stdout.print("awaiting connection\n", .{});
+    try stdout.print("awaiting, connection\n", .{});
 
     while (true) {
         const connection = try listener.accept();
@@ -28,7 +29,8 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
     var buffer: [1024]u8 = undefined;
 
     while (try reader.read(&buffer) > 0) {
-        try writer.writeAll("+PONG\r\n");
+        const response = try RESP.Value.simple_string("PONG");
+        try response.write(writer);
     }
 
     connection.stream.close();
