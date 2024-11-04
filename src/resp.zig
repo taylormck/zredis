@@ -1,6 +1,7 @@
 const std = @import("std");
 
-const SIMPLE_STRING_MAX_LENGTH = 255;
+// The maximum size Redis allows for bulk strings is 512 MB.
+const BULK_STRING_MAX_LENGTH = 512 * 1024 * 1024;
 
 pub const Value = union(enum) {
     SimpleString: []const u8,
@@ -65,34 +66,28 @@ pub const Value = union(enum) {
 
         return switch (type_token) {
             '+' => {
-                const line_maybe = try reader.readUntilDelimiterOrEofAlloc(
-                    allocator,
-                    '\r',
-                    SIMPLE_STRING_MAX_LENGTH,
-                );
+                var content = std.ArrayList(u8).init(allocator);
+                errdefer content.deinit();
 
+                try reader.streamUntilDelimiter(content.writer(), '\r', null);
                 try consume(reader, '\n');
 
-                const line = line_maybe orelse return Self.Error.ParseError;
-
-                return Self.simple_string(line);
+                return Self.simple_string(try content.toOwnedSlice());
             },
             '$' => {
-                const length_maybe = try reader.readUntilDelimiterOrEofAlloc(
-                    allocator,
-                    '\r',
-                    SIMPLE_STRING_MAX_LENGTH,
-                );
+                var length_buffer = std.ArrayList(u8).init(allocator);
+                errdefer length_buffer.deinit();
 
+                try reader.streamUntilDelimiter(length_buffer.writer(), '\r', null);
                 try consume(reader, '\n');
 
-                const length_buffer = length_maybe orelse return Self.Error.ParseError;
-                const length = try std.fmt.parseInt(usize, length_buffer, 10);
+                const length = try std.fmt.parseInt(usize, length_buffer.items, 10);
 
                 var content_buffer = std.ArrayList(u8).init(allocator);
+                errdefer content_buffer.deinit();
                 try content_buffer.ensureTotalCapacityPrecise(length);
 
-                const content_bytes_read = try reader.readAll(content_buffer.items);
+                const content_bytes_read = try reader.read(content_buffer.items);
 
                 if (content_bytes_read != length) {
                     return Self.Error.ParseError;
@@ -118,17 +113,13 @@ const ReaderError = error{
 };
 
 fn next(reader: anytype) !u8 {
-    var buffer: [1]u8 = undefined;
-    _ = try reader.read(&buffer);
-
-    return buffer[0];
+    return try reader.readByte();
 }
 
 fn consume(reader: anytype, expected_byte: u8) !void {
-    var buffer: [1]u8 = undefined;
-    _ = try reader.read(&buffer);
+    const next_char = try next(reader);
 
-    if (buffer[0] != expected_byte) {
+    if (next_char != expected_byte) {
         return ReaderError.UnexpectedByte;
     }
 }
