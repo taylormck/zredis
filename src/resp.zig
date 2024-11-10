@@ -107,6 +107,17 @@ pub const Value = union(enum) {
 
                 return Self.bulk_string(try content_buffer.toOwnedSlice());
             },
+            ':' => {
+                var content = std.ArrayList(u8).init(allocator);
+                defer content.deinit();
+
+                try reader.streamUntilDelimiter(content.writer(), '\r', null);
+                try consume(reader, '\n');
+
+                const data = try std.fmt.parseInt(i64, content.items, 10);
+
+                return Self.integer(data);
+            },
             // '*' => {},
             else => ReaderError.UnexpectedByte,
         };
@@ -388,6 +399,48 @@ test "read a simple error" {
 
     switch (result) {
         .SimpleError => |s| try expect(std.mem.eql(u8, s, "foo")),
+        else => try expect(false),
+    }
+}
+
+test "read an integer" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write(":42\r\n");
+
+    try expect(bytes_written == 5);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .Integer => |n| try expect(n == 42),
+        else => try expect(false),
+    }
+}
+
+test "read a negative integer" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write(":-42\r\n");
+
+    try expect(bytes_written == 6);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .Integer => |n| try expect(n == -42),
         else => try expect(false),
     }
 }
