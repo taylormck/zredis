@@ -112,7 +112,25 @@ pub const Value = union(enum) {
 
                 return Self.integer(data);
             },
-            // '*' => {},
+            '*' => {
+                var length_buffer = std.ArrayList(u8).init(allocator);
+                defer length_buffer.deinit();
+
+                try reader.streamUntilDelimiter(length_buffer.writer(), '\r', null);
+                try consume(reader, '\n');
+
+                const length = try std.fmt.parseInt(usize, length_buffer.items, 10);
+
+                var content = std.ArrayList(Value).init(allocator);
+                errdefer content.deinit();
+
+                while (content.items.len < length) {
+                    const value = try Value.read(allocator, reader);
+                    try content.append(value);
+                }
+
+                return Self.array(try content.toOwnedSlice());
+            },
             else => ReaderError.UnexpectedByte,
         };
     }
@@ -481,6 +499,27 @@ test "read a bulk string" {
     }
 }
 
+test "read an empty array" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("*0\r\n");
+
+    try expect(bytes_written == 4);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .Array => |arr| try expect(arr.len == 0),
+        else => try expect(false),
+    }
+}
+
 test "read an array of bulk strings" {
     const expect = std.testing.expect;
     const test_allocator = std.testing.allocator;
@@ -507,6 +546,54 @@ test "read an array of bulk strings" {
 
             switch (arr[1]) {
                 .BulkString => |arg| try expect(std.mem.eql(u8, arg, "Hello, world!")),
+                else => try expect(false),
+            }
+        },
+        else => try expect(false),
+    }
+}
+
+test "read an array of mixed values" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("*5\r\n$3\r\nfoo\r\n+bar\r\n-oops\r\n:42\r\n:-42\r\n");
+
+    try expect(bytes_written == 37);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .Array => |arr| {
+            try expect(arr.len == 5);
+
+            switch (arr[0]) {
+                .BulkString => |str| try expect(std.mem.eql(u8, str, "foo")),
+                else => try expect(false),
+            }
+
+            switch (arr[1]) {
+                .SimpleString => |str| try expect(std.mem.eql(u8, str, "bar")),
+                else => try expect(false),
+            }
+
+            switch (arr[2]) {
+                .SimpleError => |err| try expect(std.mem.eql(u8, err, "oops")),
+                else => try expect(false),
+            }
+
+            switch (arr[3]) {
+                .Integer => |n| try expect(n == 42),
+                else => try expect(false),
+            }
+
+            switch (arr[4]) {
+                .Integer => |n| try expect(n == -42),
                 else => try expect(false),
             }
         },
