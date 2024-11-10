@@ -74,6 +74,15 @@ pub const Value = union(enum) {
 
                 return Self.simple_string(try content.toOwnedSlice());
             },
+            '-' => {
+                var content = std.ArrayList(u8).init(allocator);
+                errdefer content.deinit();
+
+                try reader.streamUntilDelimiter(content.writer(), '\r', null);
+                try consume(reader, '\n');
+
+                return Self.simple_error(try content.toOwnedSlice());
+            },
             '$' => {
                 var length_buffer = std.ArrayList(u8).init(allocator);
                 errdefer length_buffer.deinit();
@@ -358,6 +367,27 @@ test "read a simple string" {
 
     switch (result) {
         .SimpleString => |s| try expect(std.mem.eql(u8, s, "foo")),
+        else => try expect(false),
+    }
+}
+
+test "read a simple error" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("-foo\r\n");
+
+    try expect(bytes_written == 6);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .SimpleError => |s| try expect(std.mem.eql(u8, s, "foo")),
         else => try expect(false),
     }
 }
