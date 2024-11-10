@@ -439,6 +439,27 @@ test "read a negative integer" {
     }
 }
 
+test "read an empty bulk string" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("$0\r\n\r\n");
+
+    try expect(bytes_written == 6);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .BulkString => |s| try expect(std.mem.eql(u8, s, "")),
+        else => try expect(false),
+    }
+}
+
 test "read a bulk string" {
     const expect = std.testing.expect;
     const test_allocator = std.testing.allocator;
@@ -456,6 +477,39 @@ test "read a bulk string" {
 
     switch (result) {
         .BulkString => |s| try expect(std.mem.eql(u8, s, "foo")),
+        else => try expect(false),
+    }
+}
+
+test "read an array of bulk strings" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("*2\r\n$4\r\necho\r\n$13\r\nHello, world!\r\n");
+
+    try expect(bytes_written == 34);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .Array => |arr| {
+            try expect(arr.len == 2);
+
+            switch (arr[0]) {
+                .BulkString => |command| try expect(std.mem.eql(u8, command, "echo")),
+                else => try expect(false),
+            }
+
+            switch (arr[1]) {
+                .BulkString => |arg| try expect(std.mem.eql(u8, arg, "Hello, world!")),
+                else => try expect(false),
+            }
+        },
         else => try expect(false),
     }
 }
