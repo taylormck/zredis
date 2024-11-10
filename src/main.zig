@@ -25,52 +25,81 @@ pub fn main() !void {
     }
 }
 
+const ConnectionError = error{
+    ArgsNotCommandArray,
+    CommandNotBulkString,
+    UnsupportedCommand,
+};
+
 pub fn handle_connection(connection: std.net.Server.Connection) !void {
+    const stdout = std.io.getStdOut().writer();
     const reader = connection.stream.reader();
     const writer = connection.stream.writer();
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+
     var buffer: [1024]u8 = undefined;
+    var bytes_read = try reader.read(&buffer);
 
-    var n = try reader.read(&buffer);
+    while (bytes_read > 0) {
+        var stream = std.io.fixedBufferStream(buffer[0..bytes_read]);
 
-    while (n > 0) {
-        try handle_command(writer, buffer[0..n]);
+        const response = RESP.Value.simple_string("PONG");
+        try response.write(writer);
 
-        n = try reader.read(&buffer);
+        const commands = try RESP.Value.read(allocator, stream.reader());
+
+        switch (commands) {
+            .Array => |command_array| {
+                for (command_array) |command_input| {
+                    const command = try Command.from_resp_value(allocator, command_input, reader);
+                    try command.execute(writer);
+                }
+            },
+            else => return ConnectionError.ArgsNotCommandArray,
+        }
+
+        bytes_read = try reader.read(&buffer);
     }
-
     connection.stream.close();
-}
-
-pub fn handle_command(writer: anytype, buffer: []u8) !void {
-    const command = try Command.from_string(buffer);
-
-    const response = switch (command) {
-        .Ping => RESP.Value.simple_string("PONG"),
-    };
-
-    try response.write(writer);
+    try stdout.print("connection closed\n", .{});
 }
 
 pub const Command = enum {
     Ping,
+    Echo,
 
     const Self = @This();
     pub const Error = error{
         ParseError,
     };
 
-    pub fn from_string(s: []u8) !Self {
-        // NOTE: I wonder if this is wise.
-        // We're copying data into the string while we read from it.
-        // In theory, we're always reading ahead, so it should be safe,
-        // but if there are issues, this would be a place to be suspicious of.
-        const s_upper = std.ascii.upperString(s, s);
+    pub fn from_resp_value(allocator: std.mem.Allocator, input: RESP.Value, _: anytype) !Self {
+        const command = switch (input) {
+            .BulkString => |s| s,
+            else => return ConnectionError.CommandNotBulkString,
+        };
 
-        if (std.mem.eql(u8, s_upper, "PING")) {
+        const command_upper = try std.ascii.allocUpperString(
+            allocator,
+            command,
+        );
+
+        if (std.mem.eql(u8, command_upper, "PING")) {
             return .Ping;
         }
 
         return Error.ParseError;
+    }
+
+    pub fn execute(self: *const Self, writer: anytype) !void {
+        const response = switch (self.*) {
+            .Ping => RESP.Value.simple_string("PONG"),
+            else => return ConnectionError.UnsupportedCommand,
+        };
+
+        try response.write(writer);
     }
 };
 

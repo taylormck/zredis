@@ -42,7 +42,7 @@ pub const Value = union(enum) {
         _: std.fmt.FormatOptions,
         writer: anytype,
     ) !void {
-        self.write(writer);
+        try self.write(writer);
     }
 
     pub fn write(self: Self, writer: anytype) !void {
