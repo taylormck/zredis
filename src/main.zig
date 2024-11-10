@@ -58,6 +58,8 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
 pub const Command = union(enum) {
     Ping: []const u8,
     Echo: []const u8,
+    Set: [2][]const u8,
+    Get: []const u8,
 
     const Self = @This();
     pub const Error = error{
@@ -96,12 +98,25 @@ pub const Command = union(enum) {
             return .{ .Ping = ping_text };
         }
 
+        if (std.mem.eql(u8, command_upper, "ECHO")) {
+            const echo_text =
+                switch (command_array[1]) {
+                .BulkString => |s| s,
+                else => {
+                    return ConnectionError.ArgNotBulkString;
+                },
+            };
+
+            return .{ .Echo = echo_text };
+        }
+
         return Error.ParseError;
     }
 
     pub fn execute(self: *const Self, writer: anytype) !void {
         const response = switch (self.*) {
-            .Ping => |str| RESP.Value.simple_string(str),
+            .Ping => |str| RESP.Value.bulk_string(str),
+            .Echo => |str| RESP.Value.bulk_string(str),
             else => return ConnectionError.UnsupportedCommand,
         };
 
