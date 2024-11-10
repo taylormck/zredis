@@ -1,6 +1,7 @@
 const std = @import("std");
 const net = std.net;
 const RESP = @import("./resp.zig");
+const Command = @import("./command.zig").Command;
 
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
@@ -25,12 +26,6 @@ pub fn main() !void {
     }
 }
 
-const ConnectionError = error{
-    ArgsNotCommandArray,
-    ArgNotBulkString,
-    UnsupportedCommand,
-};
-
 pub fn handle_connection(connection: std.net.Server.Connection) !void {
     const stdout = std.io.getStdOut().writer();
     const reader = connection.stream.reader();
@@ -54,75 +49,6 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
     connection.stream.close();
     try stdout.print("connection closed\n", .{});
 }
-
-pub const Command = union(enum) {
-    Ping: []const u8,
-    Echo: []const u8,
-    Set: [2][]const u8,
-    Get: []const u8,
-
-    const Self = @This();
-    pub const Error = error{
-        ParseError,
-    };
-
-    pub fn from_resp_value(allocator: std.mem.Allocator, input: RESP.Value, _: anytype) !Self {
-        const command_array = switch (input) {
-            .Array => |arr| arr,
-            else => {
-                return ConnectionError.ArgsNotCommandArray;
-            },
-        };
-
-        const command = switch (command_array[0]) {
-            .BulkString => |s| s,
-            else => return ConnectionError.ArgNotBulkString,
-        };
-
-        const command_upper = try std.ascii.allocUpperString(
-            allocator,
-            command,
-        );
-
-        if (std.mem.eql(u8, command_upper, "PING")) {
-            const ping_text = switch (command_array.len) {
-                1 => "PONG",
-                else => switch (command_array[1]) {
-                    .BulkString => |s| s,
-                    else => {
-                        return ConnectionError.ArgNotBulkString;
-                    },
-                },
-            };
-
-            return .{ .Ping = ping_text };
-        }
-
-        if (std.mem.eql(u8, command_upper, "ECHO")) {
-            const echo_text =
-                switch (command_array[1]) {
-                .BulkString => |s| s,
-                else => {
-                    return ConnectionError.ArgNotBulkString;
-                },
-            };
-
-            return .{ .Echo = echo_text };
-        }
-
-        return Error.ParseError;
-    }
-
-    pub fn execute(self: *const Self, writer: anytype) !void {
-        const response = switch (self.*) {
-            .Ping => |str| RESP.Value.bulk_string(str),
-            .Echo => |str| RESP.Value.bulk_string(str),
-            else => return ConnectionError.UnsupportedCommand,
-        };
-
-        try response.write(writer);
-    }
-};
 
 test {
     std.testing.refAllDecls(@This());
