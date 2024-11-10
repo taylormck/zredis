@@ -8,7 +8,7 @@ pub const Value = union(enum) {
     SimpleError: []const u8,
     Integer: i64,
     BulkString: []const u8,
-    Array: []const Value,
+    Array: []Value,
 
     const Self = @This();
 
@@ -32,7 +32,7 @@ pub const Value = union(enum) {
         return .{ .BulkString = data };
     }
 
-    pub fn array(data: []const Value) Value {
+    pub fn array(data: []Value) Value {
         return .{ .Array = data };
     }
 
@@ -99,13 +99,22 @@ pub const Value = union(enum) {
                 return Self.bulk_string(try content_buffer.toOwnedSlice());
             },
             // '*' => {},
-            // TODO: replace with actual error handling
-            else => Self.simple_string("oops"),
+            else => ReaderError.UnexpectedByte,
         };
     }
 
-    // TODO: implement deninit
-    pub fn deinit() void {}
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .SimpleString, .SimpleError, .BulkString => |arr| allocator.free(arr),
+            .Array => |arr| {
+                for (arr, 0..) |_, i| {
+                    arr[i].deinit(allocator);
+                }
+                allocator.free(arr);
+            },
+            .Integer => {},
+        }
+    }
 };
 
 const ReaderError = error{
@@ -278,8 +287,9 @@ test "write an array with a single element" {
     defer buffer.deinit();
 
     const writer = buffer.writer();
-    const values = [_]Value{Value.simple_string("foo")};
-    const val = Value.array(values[0..]);
+
+    var values = [_]Value{Value.simple_string("foo")};
+    const val = Value.array(&values);
 
     try val.write(writer);
 
@@ -295,12 +305,13 @@ test "write an array with a multiple elements" {
     defer buffer.deinit();
 
     const writer = buffer.writer();
-    const values = [_]Value{
+
+    var values = [_]Value{
         Value.simple_string("foo"),
         Value.simple_string("bar"),
         Value.simple_string("xyz"),
     };
-    const val = Value.array(values[0..]);
+    const val = Value.array(&values);
 
     try val.write(writer);
 
@@ -316,14 +327,14 @@ test "write an array with mixed element types" {
     defer buffer.deinit();
 
     const writer = buffer.writer();
-    const values = [_]Value{
+    var values = [_]Value{
         Value.simple_string("foo"),
         Value.simple_error("bar"),
         Value.bulk_string("xyz"),
         Value.integer(42),
         Value.integer(-42),
     };
-    const val = Value.array(values[0..]);
+    const val = Value.array(&values);
 
     try val.write(writer);
 
@@ -342,7 +353,8 @@ test "read a simple string" {
 
     var stream = std.io.fixedBufferStream(content.items);
 
-    const result = try Value.read(test_allocator, stream.reader());
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
 
     switch (result) {
         .SimpleString => |s| try expect(std.mem.eql(u8, s, "foo")),
