@@ -85,7 +85,7 @@ pub const Value = union(enum) {
             },
             '$' => {
                 var length_buffer = std.ArrayList(u8).init(allocator);
-                errdefer length_buffer.deinit();
+                defer length_buffer.deinit();
 
                 try reader.streamUntilDelimiter(length_buffer.writer(), '\r', null);
                 try consume(reader, '\n');
@@ -94,15 +94,9 @@ pub const Value = union(enum) {
 
                 var content_buffer = std.ArrayList(u8).init(allocator);
                 errdefer content_buffer.deinit();
-                try content_buffer.ensureTotalCapacityPrecise(length);
+                try content_buffer.ensureTotalCapacity(length);
 
-                const content_bytes_read = try reader.read(content_buffer.items);
-
-                if (content_bytes_read != length) {
-                    return Self.Error.ParseError;
-                }
-
-                try consume(reader, '\r');
+                try reader.streamUntilDelimiter(content_buffer.writer(), '\r', null);
                 try consume(reader, '\n');
 
                 return Self.bulk_string(try content_buffer.toOwnedSlice());
@@ -441,6 +435,27 @@ test "read a negative integer" {
 
     switch (result) {
         .Integer => |n| try expect(n == -42),
+        else => try expect(false),
+    }
+}
+
+test "read a bulk string" {
+    const expect = std.testing.expect;
+    const test_allocator = std.testing.allocator;
+
+    var content = std.ArrayList(u8).init(test_allocator);
+    defer content.deinit();
+    const bytes_written = try content.writer().write("$3\r\nfoo\r\n");
+
+    try expect(bytes_written == 9);
+
+    var stream = std.io.fixedBufferStream(content.items);
+
+    var result = try Value.read(test_allocator, stream.reader());
+    defer result.deinit(test_allocator);
+
+    switch (result) {
+        .BulkString => |s| try expect(std.mem.eql(u8, s, "foo")),
         else => try expect(false),
     }
 }
