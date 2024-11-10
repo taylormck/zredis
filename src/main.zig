@@ -27,7 +27,7 @@ pub fn main() !void {
 
 const ConnectionError = error{
     ArgsNotCommandArray,
-    CommandNotBulkString,
+    ArgNotBulkString,
     UnsupportedCommand,
 };
 
@@ -45,20 +45,9 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
     while (bytes_read > 0) {
         var stream = std.io.fixedBufferStream(buffer[0..bytes_read]);
 
-        const response = RESP.Value.simple_string("PONG");
-        try response.write(writer);
-
-        const commands = try RESP.Value.read(allocator, stream.reader());
-
-        switch (commands) {
-            .Array => |command_array| {
-                for (command_array) |command_input| {
-                    const command = try Command.from_resp_value(allocator, command_input, reader);
-                    try command.execute(writer);
-                }
-            },
-            else => return ConnectionError.ArgsNotCommandArray,
-        }
+        const command_content = try RESP.Value.read(allocator, stream.reader());
+        const command = try Command.from_resp_value(allocator, command_content, reader);
+        try command.execute(writer);
 
         bytes_read = try reader.read(&buffer);
     }
@@ -66,9 +55,9 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
     try stdout.print("connection closed\n", .{});
 }
 
-pub const Command = enum {
-    Ping,
-    Echo,
+pub const Command = union(enum) {
+    Ping: []const u8,
+    Echo: []const u8,
 
     const Self = @This();
     pub const Error = error{
@@ -76,9 +65,16 @@ pub const Command = enum {
     };
 
     pub fn from_resp_value(allocator: std.mem.Allocator, input: RESP.Value, _: anytype) !Self {
-        const command = switch (input) {
+        const command_array = switch (input) {
+            .Array => |arr| arr,
+            else => {
+                return ConnectionError.ArgsNotCommandArray;
+            },
+        };
+
+        const command = switch (command_array[0]) {
             .BulkString => |s| s,
-            else => return ConnectionError.CommandNotBulkString,
+            else => return ConnectionError.ArgNotBulkString,
         };
 
         const command_upper = try std.ascii.allocUpperString(
@@ -87,7 +83,17 @@ pub const Command = enum {
         );
 
         if (std.mem.eql(u8, command_upper, "PING")) {
-            return .Ping;
+            const ping_text = switch (command_array.len) {
+                1 => "PONG",
+                else => switch (command_array[1]) {
+                    .BulkString => |s| s,
+                    else => {
+                        return ConnectionError.ArgNotBulkString;
+                    },
+                },
+            };
+
+            return .{ .Ping = ping_text };
         }
 
         return Error.ParseError;
@@ -95,7 +101,7 @@ pub const Command = enum {
 
     pub fn execute(self: *const Self, writer: anytype) !void {
         const response = switch (self.*) {
-            .Ping => RESP.Value.simple_string("PONG"),
+            .Ping => |str| RESP.Value.simple_string(str),
             else => return ConnectionError.UnsupportedCommand,
         };
 
