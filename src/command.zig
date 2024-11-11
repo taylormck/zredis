@@ -1,5 +1,6 @@
 const std = @import("std");
 const RESP = @import("./resp.zig");
+const data = @import("./data.zig");
 
 pub const Command = union(enum) {
     Ping: []const u8,
@@ -12,6 +13,7 @@ pub const Command = union(enum) {
         ArgsNotCommandArray,
         ArgNotBulkString,
         UnsupportedCommand,
+        InsufficientArguments,
     };
 
     pub fn from_resp_value(allocator: std.mem.Allocator, input: RESP.Value, _: anytype) !Self {
@@ -47,6 +49,10 @@ pub const Command = union(enum) {
         }
 
         if (std.mem.eql(u8, command_upper, "ECHO")) {
+            if (command_array.len < 2) {
+                return Error.InsufficientArguments;
+            }
+
             const echo_text =
                 switch (command_array[1]) {
                 .BulkString => |s| s,
@@ -58,6 +64,50 @@ pub const Command = union(enum) {
             return .{ .Echo = echo_text };
         }
 
+        if (std.mem.eql(u8, command_upper, "SET")) {
+            if (command_array.len < 3) {
+                return Error.InsufficientArguments;
+            }
+
+            const key =
+                switch (command_array[1]) {
+                .BulkString => |s| s,
+                else => {
+                    return Error.ArgNotBulkString;
+                },
+            };
+
+            const value = switch (command_array[2]) {
+                .BulkString => |s| s,
+                else => {
+                    return Error.ArgNotBulkString;
+                },
+            };
+
+            var args = try allocator.create([2][]const u8);
+            errdefer allocator.destroy(args);
+            args[0] = key;
+            args[1] = value;
+
+            return .{ .Set = args.* };
+        }
+
+        if (std.mem.eql(u8, command_upper, "SET")) {
+            if (command_array.len < 3) {
+                return Error.InsufficientArguments;
+            }
+
+            const key =
+                switch (command_array[1]) {
+                .BulkString => |s| s,
+                else => {
+                    return Error.ArgNotBulkString;
+                },
+            };
+
+            return .{ .Get = key };
+        }
+
         return Error.UnsupportedCommand;
     }
 
@@ -65,9 +115,23 @@ pub const Command = union(enum) {
         const response = switch (self.*) {
             .Ping => |str| RESP.Value.bulk_string(str),
             .Echo => |str| RESP.Value.bulk_string(str),
-            else => return Error.UnsupportedCommand,
+            .Set => |args| blk: {
+                const key = args[0];
+                const value = args[1];
+                try data.set(key, value);
+
+                break :blk RESP.Value.simple_string("OK");
+            },
+            .Get => |key| data.get(key),
+            // else => return Error.UnsupportedCommand,
         };
 
         try response.write(writer);
     }
+
+    // pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    //     switch (self.*) {
+    //         // TODO: deinit the data
+    //     }
+    // }
 };
