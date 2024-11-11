@@ -7,6 +7,7 @@ pub const Command = union(enum) {
     Echo: []const u8,
     Set: [2][]const u8,
     Get: []const u8,
+    Config: []const u8,
 
     const Self = @This();
     const Error = error{
@@ -108,6 +109,22 @@ pub const Command = union(enum) {
             return .{ .Get = key };
         }
 
+        if (std.mem.eql(u8, command_upper, "CONFIG")) {
+            const subcommand = switch (command_array.len) {
+                1 => "",
+                else => switch (command_array[1]) {
+                    .BulkString => |s| s,
+                    else => {
+                        return Error.ArgNotBulkString;
+                    },
+                },
+            };
+            return .{ .Config = subcommand };
+        }
+
+        const stderr = std.io.getStdErr().writer();
+        try stderr.print("Unsupported command: {s}\n", .{command});
+
         return Error.UnsupportedCommand;
     }
 
@@ -123,6 +140,7 @@ pub const Command = union(enum) {
                 break :blk RESP.Value.simple_string("OK");
             },
             .Get => |key| data.get(key),
+            .Config => RESP.Value.simple_string("OK"),
             // else => return Error.UnsupportedCommand,
         };
 
