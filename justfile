@@ -9,3 +9,6 @@ unit-test:
 
 test: unit-test functional-test
 
+benchmark:
+    redis-benchmark -t set,get, -n 100000 -q
+
