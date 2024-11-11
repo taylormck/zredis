@@ -2,6 +2,7 @@ const std = @import("std");
 const net = std.net;
 const RESP = @import("./resp.zig");
 const Command = @import("./command.zig").Command;
+const data = @import("./data.zig");
 
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
@@ -12,6 +13,11 @@ pub fn main() !void {
         .reuse_address = true,
     });
     defer listener.deinit();
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    data.initialize_data(allocator);
+    defer data.deinit_data();
 
     try stdout.print("awaiting, connection\n", .{});
 

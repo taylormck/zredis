@@ -8,6 +8,7 @@ pub const Value = union(enum) {
     SimpleError: []const u8,
     Integer: i64,
     BulkString: []const u8,
+    NullBulkString,
     Array: []Value,
 
     const Self = @This();
@@ -32,6 +33,10 @@ pub const Value = union(enum) {
         return .{ .BulkString = data };
     }
 
+    pub fn null_bulk_string() Value {
+        return .NullBulkString;
+    }
+
     pub fn array(data: []Value) Value {
         return .{ .Array = data };
     }
@@ -51,6 +56,7 @@ pub const Value = union(enum) {
             .SimpleError => |s| try writer.print("-{s}\r\n", .{s}),
             .Integer => |n| try writer.print(":{d}\r\n", .{n}),
             .BulkString => |s| try writer.print("${d}\r\n{s}\r\n", .{ s.len, s }),
+            .NullBulkString => try writer.print("$-1\r\n", .{}),
             .Array => |values| {
                 try writer.print("*{d}\r\n", .{values.len});
 
@@ -91,6 +97,10 @@ pub const Value = union(enum) {
                 try consume(reader, '\n');
 
                 const length = try std.fmt.parseInt(usize, length_buffer.items, 10);
+
+                if (length == -1) {
+                    return Self.null_bulk_string();
+                }
 
                 var content_buffer = std.ArrayList(u8).init(allocator);
                 errdefer content_buffer.deinit();
@@ -144,7 +154,7 @@ pub const Value = union(enum) {
                 }
                 allocator.free(arr);
             },
-            .Integer => {},
+            .Integer, .NullBulkString => {},
         }
     }
 };
@@ -275,6 +285,22 @@ test "write a bulk string" {
     try val.write(writer);
 
     try expect(std.mem.eql(u8, buffer.items, "$3\r\nfoo\r\n"));
+}
+
+test "write a null bulk string" {
+    const ArrayList = std.ArrayList;
+    const expect = std.testing.expect;
+
+    const test_allocator = std.testing.allocator;
+    var buffer = ArrayList(u8).init(test_allocator);
+    defer buffer.deinit();
+
+    const writer = buffer.writer();
+    const val = Value.null_bulk_string();
+
+    try val.write(writer);
+
+    try expect(std.mem.eql(u8, buffer.items, "$-1\r\n"));
 }
 
 test "write an empty bulk string" {

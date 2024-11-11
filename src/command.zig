@@ -92,8 +92,8 @@ pub const Command = union(enum) {
             return .{ .Set = args.* };
         }
 
-        if (std.mem.eql(u8, command_upper, "SET")) {
-            if (command_array.len < 3) {
+        if (std.mem.eql(u8, command_upper, "GET")) {
+            if (command_array.len < 2) {
                 return Error.InsufficientArguments;
             }
 
