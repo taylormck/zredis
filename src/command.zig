@@ -2,10 +2,16 @@ const std = @import("std");
 const RESP = @import("./resp.zig");
 const data = @import("./data.zig");
 
+const SetData = struct {
+    key: []const u8,
+    value: []const u8,
+    expiry: ?i64,
+};
+
 pub const Command = union(enum) {
     Ping: []const u8,
     Echo: []const u8,
-    Set: [2][]const u8,
+    Set: SetData,
     Get: []const u8,
     Config: []const u8,
 
@@ -15,9 +21,12 @@ pub const Command = union(enum) {
         ArgNotBulkString,
         UnsupportedCommand,
         InsufficientArguments,
+        ArgNotInteger,
     };
 
     pub fn from_resp_value(allocator: std.mem.Allocator, input: RESP.Value, _: anytype) !Self {
+        _ = allocator;
+
         const command_array = switch (input) {
             .Array => |arr| arr,
             else => {
@@ -29,13 +38,7 @@ pub const Command = union(enum) {
             .BulkString => |s| s,
             else => return Error.ArgNotBulkString,
         };
-
-        const command_upper = try std.ascii.allocUpperString(
-            allocator,
-            command,
-        );
-
-        if (std.mem.eql(u8, command_upper, "PING")) {
+        if (std.ascii.eqlIgnoreCase(command, "PING")) {
             const ping_text = switch (command_array.len) {
                 1 => "PONG",
                 else => switch (command_array[1]) {
@@ -49,7 +52,7 @@ pub const Command = union(enum) {
             return .{ .Ping = ping_text };
         }
 
-        if (std.mem.eql(u8, command_upper, "ECHO")) {
+        if (std.ascii.eqlIgnoreCase(command, "ECHO")) {
             if (command_array.len < 2) {
                 return Error.InsufficientArguments;
             }
@@ -65,7 +68,7 @@ pub const Command = union(enum) {
             return .{ .Echo = echo_text };
         }
 
-        if (std.mem.eql(u8, command_upper, "SET")) {
+        if (std.ascii.eqlIgnoreCase(command, "SET")) {
             if (command_array.len < 3) {
                 return Error.InsufficientArguments;
             }
@@ -85,15 +88,38 @@ pub const Command = union(enum) {
                 },
             };
 
-            var args = try allocator.create([2][]const u8);
-            errdefer allocator.destroy(args);
-            args[0] = key;
-            args[1] = value;
+            const expiry = blk: {
+                if (command_array.len < 5) {
+                    break :blk null;
+                }
 
-            return .{ .Set = args.* };
+                const extra_arg = switch (command_array[3]) {
+                    .BulkString => |s| s,
+                    else => {
+                        return Error.ArgNotBulkString;
+                    },
+                };
+
+                if (!std.ascii.eqlIgnoreCase(extra_arg, "PX")) {
+                    break :blk null;
+                }
+
+                break :blk switch (command_array[4]) {
+                    .BulkString => |s| try std.fmt.parseInt(i64, s, 10),
+                    else => {
+                        return Error.ArgNotBulkString;
+                    },
+                };
+            };
+
+            return .{ .Set = .{
+                .key = key,
+                .value = value,
+                .expiry = expiry,
+            } };
         }
 
-        if (std.mem.eql(u8, command_upper, "GET")) {
+        if (std.ascii.eqlIgnoreCase(command, "GET")) {
             if (command_array.len < 2) {
                 return Error.InsufficientArguments;
             }
@@ -109,7 +135,7 @@ pub const Command = union(enum) {
             return .{ .Get = key };
         }
 
-        if (std.mem.eql(u8, command_upper, "CONFIG")) {
+        if (std.ascii.eqlIgnoreCase(command, "CONFIG")) {
             const subcommand = switch (command_array.len) {
                 1 => "",
                 else => switch (command_array[1]) {
@@ -132,10 +158,8 @@ pub const Command = union(enum) {
         const response = switch (self.*) {
             .Ping => |str| RESP.Value.bulk_string(str),
             .Echo => |str| RESP.Value.bulk_string(str),
-            .Set => |args| blk: {
-                const key = args[0];
-                const value = args[1];
-                try data.set(key, value);
+            .Set => |set_data| blk: {
+                try data.set(set_data.key, set_data.value, set_data.expiry);
 
                 break :blk RESP.Value.simple_string("OK");
             },
