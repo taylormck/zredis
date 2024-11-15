@@ -1,6 +1,7 @@
 const std = @import("std");
 const RESP = @import("./resp.zig");
 const data = @import("./data.zig");
+const cli_args = @import("./cli-args.zig");
 
 const SetData = struct {
     key: []const u8,
@@ -154,7 +155,7 @@ pub const Command = union(enum) {
         return Error.UnsupportedCommand;
     }
 
-    pub fn execute(self: *const Self, writer: anytype) !void {
+    pub fn execute(self: *const Self, writer: anytype, configuration: cli_args.Args) !void {
         const response = switch (self.*) {
             .Ping => |str| RESP.Value.bulk_string(str),
             .Echo => |str| RESP.Value.bulk_string(str),
@@ -164,8 +165,11 @@ pub const Command = union(enum) {
                 break :blk RESP.Value.simple_string("OK");
             },
             .Get => |key| data.get(key),
-            .Config => RESP.Value.simple_string("OK"),
-            // else => return Error.UnsupportedCommand,
+            .Config => |subcommand| blk: {
+                if (std.ascii.eqlIgnoreCase("GET", subcommand)) {}
+
+                break :blk RESP.Value.simple_string("OK");
+            },
         };
 
         try response.write(writer);

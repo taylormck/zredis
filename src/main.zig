@@ -3,19 +3,28 @@ const net = std.net;
 const RESP = @import("./resp.zig");
 const Command = @import("./command.zig").Command;
 const data = @import("./data.zig");
+const cli_args = @import("./cli-args.zig");
 
 pub fn main() !void {
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    const allocator = gpa.allocator();
+    defer _ = gpa.deinit();
+
     const stdout = std.io.getStdOut().writer();
+
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
+
+    const process_config = try cli_args.process_args(args);
 
     const address = try net.Address.resolveIp("127.0.0.1", 6379);
 
     var listener = try address.listen(.{
         .reuse_address = true,
     });
+
     defer listener.deinit();
 
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    const allocator = gpa.allocator();
     data.initialize_data(allocator);
     defer data.deinit_data();
 
@@ -32,7 +41,7 @@ pub fn main() !void {
     }
 }
 
-pub fn handle_connection(connection: std.net.Server.Connection) !void {
+pub fn handle_connection(connection: std.net.Server.Connection, configuration: cli_args.Args) !void {
     const stdout = std.io.getStdOut().writer();
     const reader = connection.stream.reader();
     const writer = connection.stream.writer();
@@ -48,7 +57,7 @@ pub fn handle_connection(connection: std.net.Server.Connection) !void {
 
         const command_content = try RESP.Value.read(allocator, stream.reader());
         const command = try Command.from_resp_value(allocator, command_content, reader);
-        try command.execute(writer);
+        try command.execute(writer, configuration);
 
         bytes_read = try reader.read(&buffer);
     }

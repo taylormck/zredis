@@ -1,5 +1,5 @@
 watch:
-    watchexec -r -e zig -w src -- ./your_program.sh
+    watchexec -r -e zig -w src -- ./your_program.sh --dir /tmp/redis-files --dbfilename dump.rdb
 
 functional-test:
     ./test_client.sh
