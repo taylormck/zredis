@@ -36,7 +36,7 @@ pub fn main() !void {
 
         // NOTE: for now, we just spawn a new thread. However, in the future,
         // we should consider creating either a thread pool or an event loop.
-        const thread = try std.Thread.spawn(.{}, handle_connection, .{connection});
+        const thread = try std.Thread.spawn(.{}, handle_connection, .{ connection, process_config });
         thread.detach();
     }
 }

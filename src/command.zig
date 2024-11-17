@@ -14,7 +14,7 @@ pub const Command = union(enum) {
     Echo: []const u8,
     Set: SetData,
     Get: []const u8,
-    Config: []const u8,
+    Config: [][]const u8,
 
     const Self = @This();
     const Error = error{
@@ -26,8 +26,6 @@ pub const Command = union(enum) {
     };
 
     pub fn from_resp_value(allocator: std.mem.Allocator, input: RESP.Value, _: anytype) !Self {
-        _ = allocator;
-
         const command_array = switch (input) {
             .Array => |arr| arr,
             else => {
@@ -146,7 +144,25 @@ pub const Command = union(enum) {
                     },
                 },
             };
-            return .{ .Config = subcommand };
+
+            var command_args = std.ArrayList([]const u8).init(allocator);
+            errdefer command_args.deinit();
+
+            try command_args.append(subcommand);
+
+            if (std.ascii.eqlIgnoreCase(subcommand, "get")) {
+                // NOTE: assert command_array has another property
+                const config_entry_name = switch (command_array[2]) {
+                    .BulkString => |s| s,
+                    else => {
+                        return Error.ArgNotBulkString;
+                    },
+                };
+
+                try command_args.append(config_entry_name);
+            }
+
+            return .{ .Config = try command_args.toOwnedSlice() };
         }
 
         const stderr = std.io.getStdErr().writer();
@@ -165,8 +181,27 @@ pub const Command = union(enum) {
                 break :blk RESP.Value.simple_string("OK");
             },
             .Get => |key| data.get(key),
-            .Config => |subcommand| blk: {
-                if (std.ascii.eqlIgnoreCase("GET", subcommand)) {}
+            .Config => |arr| blk: {
+                if (std.ascii.eqlIgnoreCase("get", arr[0])) {
+                    var response_values: [2]RESP.Value = .{
+                        RESP.Value.bulk_string(arr[1]),
+                        RESP.Value.null_bulk_string(),
+                    };
+
+                    if (std.ascii.eqlIgnoreCase("dir", arr[1])) {
+                        if (configuration.directory) |dir| {
+                            response_values[1] = RESP.Value.bulk_string(dir);
+                        }
+                    }
+
+                    if (std.ascii.eqlIgnoreCase("dbfilename", arr[1])) {
+                        if (configuration.dbfilename) |dbfilename| {
+                            response_values[1] = RESP.Value.bulk_string(dbfilename);
+                        }
+                    }
+
+                    break :blk RESP.Value.array(&response_values);
+                }
 
                 break :blk RESP.Value.simple_string("OK");
             },
@@ -175,9 +210,12 @@ pub const Command = union(enum) {
         try response.write(writer);
     }
 
-    // pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-    //     switch (self.*) {
-    //         // TODO: deinit the data
-    //     }
-    // }
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .Config => |arr| {
+                allocator.free(arr);
+            },
+            else => {},
+        }
+    }
 };
