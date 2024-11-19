@@ -4,6 +4,7 @@ const RESP = @import("./resp.zig");
 const Command = @import("./command.zig").Command;
 const data = @import("./data.zig");
 const cli_args = @import("./cli-args.zig");
+const rdb = @import("./rdb.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -16,6 +17,12 @@ pub fn main() !void {
     defer std.process.argsFree(allocator, args);
 
     const process_config = try cli_args.process_args(args);
+
+    if (process_config.directory) |dir| {
+        if (process_config.dbfilename) |dbfilename| {
+            try read_persistence_data(allocator, dir, dbfilename);
+        }
+    }
 
     const address = try net.Address.resolveIp("127.0.0.1", 6379);
 
@@ -63,6 +70,25 @@ pub fn handle_connection(connection: std.net.Server.Connection, configuration: c
     }
     connection.stream.close();
     try stdout.print("connection closed\n", .{});
+}
+
+pub fn read_persistence_data(allocator: std.mem.Allocator, dir: []const u8, dbfilename: []const u8) !void {
+    const stdout = std.io.getStdOut().writer();
+    const path = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ dir, dbfilename });
+    defer allocator.free(path);
+    try stdout.print("Loading persitence data from: {s}\n", .{path});
+
+    const rdb_file = std.fs.openFileAbsolute(path, .{ .mode = .read_write }) catch return;
+
+    var header_buffer: [9]u8 = undefined;
+    _ = try rdb_file.reader().readAll(&header_buffer);
+
+    const is_valid_header = rdb.check_header_section(&header_buffer) catch return;
+    if (!is_valid_header) {
+        return;
+    }
+
+    // TODO: read data from db
 }
 
 test {
