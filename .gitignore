@@ -16,3 +16,7 @@ bin/
 **/.DS_Store
 *.swp
 *~
+
+# Ignore persistence
+dump.rdb
+
